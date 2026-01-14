@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>MD GEN</title>
+    <title>Markdown Generator</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
     <script src="https://unpkg.com/turndown/dist/turndown.js"></script>
     <script src="https://unpkg.com/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
@@ -25,7 +25,7 @@
 <body>
 
     <div class="card">
-        <h1>Markdown 生成器</h1>
+        <h2>Markdown 生成器</h2>
         <input type="file" id="fileInput" accept=".docx" />
         <p style="font-size: 12px; color: #64748b; margin-top: 10px;">
             提示：支持从网页、Excel 或 Word 直接复制表格并粘贴到下方源码框。
@@ -72,41 +72,40 @@
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             
-            // 1. 移除干扰标签
-            doc.querySelectorAll('colgroup, col, style, meta, link, script').forEach(el => el.remove());
-
-            // 2. 深度清洗：移除所有属性 + 解构 div
-            doc.querySelectorAll('*').forEach(el => {
-                if (el.tagName === 'DIV' || el.tagName === 'SPAN') {
-                    const parent = el.parentNode;
-                    while (el.firstChild) parent.insertBefore(el.firstChild, el);
-                    el.remove();
-                } else {
-                    // 移除所有属性(class, style, data-...)，确保 Turndown 识别纯净标签
-                    while (el.attributes.length > 0) el.removeAttribute(el.attributes[0].name);
+            // 1. 先处理内容：解构 td/th 内部的 div/span，但保留其子节点（如 img）
+            const contents = doc.querySelectorAll('td div, td span, th div, th span');
+            contents.forEach(el => {
+                const parent = el.parentNode;
+                while (el.firstChild) {
+                    parent.insertBefore(el.firstChild, el);
                 }
+                el.remove();
             });
 
-            // 3. 【关键修复】强制转换第一行为表头
-            // Markdown 表格必须有表头才能转换成功
-            doc.querySelectorAll('table').forEach(table => {
-                const firstRow = table.querySelector('tr');
-                if (firstRow) {
-                    const cells = firstRow.querySelectorAll('td');
-                    cells.forEach(td => {
-                        const th = doc.createElement('th');
-                        th.innerHTML = td.innerHTML;
-                        td.parentNode.replaceChild(th, td);
-                    });
-                }
-                
-                // 确保有 thead，如果没有，把第一行包裹进去
-                if (!table.querySelector('thead') && firstRow) {
-                    const thead = doc.createElement('thead');
-                    thead.appendChild(firstRow);
-                    table.insertBefore(thead, table.firstChild);
-                }
+            // 2. 精细清洗属性：除了 img 的 src，其余全部删除
+            const allElements = doc.querySelectorAll('*');
+            allElements.forEach(el => {
+                const attributes = Array.from(el.attributes);
+                attributes.forEach(attr => {
+                    // 💡 关键点：如果是 img 标签且属性是 src，则保留；否则移除
+                    if (!(el.tagName === 'IMG' && attr.name === 'src')) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
             });
+
+            // 3. 强制转换第一行为表头（确保 Turndown 识别表格）
+            const firstRow = doc.querySelector('tr');
+            if (firstRow) {
+                firstRow.querySelectorAll('td').forEach(td => {
+                    const th = doc.createElement('th');
+                    th.innerHTML = td.innerHTML;
+                    td.parentNode.replaceChild(th, td);
+                });
+            }
+
+            // 4. 清理干扰标签
+            doc.querySelectorAll('colgroup, col, style, meta').forEach(el => el.remove());
 
             return doc.body.innerHTML;
         }
