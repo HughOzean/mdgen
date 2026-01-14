@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Markdown Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://unpkg.com/turndown/dist/turndown.js"></script>
+    <script src="https://unpkg.com/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --bg: #f8fafc; --border: #e2e8f0; }
+        body { font-family: system-ui, sans-serif; max-width: 100%; margin: 0 auto; padding: 20px; background: var(--bg); }
+        .card { background: white; border: 1px solid var(--border); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .main-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: 600px; }
+        .panel { display: flex; flex-direction: column; background: white; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .panel-header { padding: 10px; background: #f1f5f9; font-weight: bold; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+        textarea { flex: 1; border: none; padding: 15px; font-family: 'Fira Code', monospace; outline: none; background: #fafafa; resize: none; font-size: 14px; line-height: 1.5; }
+        #preview { flex: 1; padding: 15px; overflow-y: auto; background: white; border-left: 1px solid var(--border); }
+        
+        /* 表格预览样式 */
+        .markdown-body table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+        .markdown-body th, .markdown-body td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+        .markdown-body tr:nth-child(2n) { background: #f6f8fa; }
+        .markdown-body img { max-height: 50vh;}
+        
+        .btn-group { margin: 15px 0; display: flex; gap: 10px; }
+        button { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; background: var(--primary); color: white; }
+        .tip { font-size: 12px; color: #64748b; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Markdown Generator</h1>
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <input type="file" id="fileInput" accept=".docx" />
+            <span style="color: #cbd5e1;">|</span>
+            <span style="font-weight: bold; color: var(--primary);">直接在下方源码框粘贴 (Ctrl+V) 网页或飞书文字</span>
+        </div>
+        <div class="tip">
+            导入docx文件以转成Markdown
+        </div>
+        <div class="btn-group">
+            <button id="downloadBtn" onclick="downloadFile()">下载 Markdown</button>
+            <button style="background: #64748b;" onclick="clearAll()">清空内容</button>
+        </div>
+    </div>
+
+    <div class="main-layout">
+        <div class="panel">
+            <div class="panel-header">Markdown 源码 (支持粘贴)</div>
+            <textarea id="output" placeholder="点击这里并按下 Ctrl+V 粘贴带格式的内容，或上传 Docx 文件..."></textarea>
+        </div>
+        <div class="panel">
+            <div class="panel-header">预览</div>
+            <div id="preview" class="markdown-body"></div>
+        </div>
+    </div>
+
+    <script>
+        // 1. 初始化 Turndown 服务
+        const turndownService = new TurndownService({ headingStyle: 'atx', bulletListMarker: '-' });
+        turndownService.use(turndownPluginGfm.gfm);
+
+        // 规则：去掉标题中的加粗
+        turndownService.addRule('remove-bold-in-headings', {
+            filter: ['strong', 'b'],
+            replacement: function (content, node) {
+                const isInsideHeading = ['H1', 'H2', 'H3', 'H4'].includes(node.parentNode.nodeName);
+                return isInsideHeading ? content : '**' + content + '**';
+            }
+        });
+
+        // 规则：列表圆点清洗
+        turndownService.addRule('list-fix', {
+            filter: ['li'],
+            replacement: function (content) {
+                return '- ' + content.trim().replace(/^[•·]\s*/, '') + '\n';
+            }
+        });
+
+        const outputArea = document.getElementById('output');
+        const previewArea = document.getElementById('preview');
+
+        // 2. 实时预览更新
+        outputArea.addEventListener('input', () => {
+            previewArea.innerHTML = marked.parse(outputArea.value);
+        });
+
+        // 3. 【核心功能】处理粘贴事件
+        outputArea.addEventListener('paste', function(e) {
+            // 获取剪贴板中的 HTML 数据
+            const html = e.clipboardData.getData('text/html');
+            
+            if (html) {
+                // 如果有 HTML 数据，阻止默认粘贴行为（即不直接粘贴纯文本）
+                e.preventDefault();
+                
+                // 将 HTML 转换为 Markdown
+                let markdown = turndownService.turndown(html);
+                
+                // 插入到光标位置
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
+                const text = this.value;
+                this.value = text.substring(0, start) + markdown + text.substring(end);
+                
+                // 更新预览
+                previewArea.innerHTML = marked.parse(this.value);
+            }
+            // 如果没有 HTML（只是普通纯文本），则让浏览器执行默认粘贴
+        });
+
+        // 4. 处理 Docx 文件上传
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const arrayBuffer = event.target.result;
+
+                function transformElement(element) {
+                    if (element.children) { element.children.forEach(transformElement); }
+                    if (element.type === "paragraph") {
+                        const firstRun = element.children.find(child => child.type === "run");
+                        if (firstRun && firstRun.fontSize) {
+                            const size = parseFloat(firstRun.fontSize);
+                            if (size >= 25 && size <= 27) element.styleName = "Heading1";
+                            else if (size >= 15 && size <= 17) element.styleName = "Heading2";
+                            else if (size >= 13 && size <= 14.5) element.styleName = "Heading3";
+                        }
+                    }
+                    return element;
+                }
+
+                try {
+                    const result = await mammoth.convertToHtml({arrayBuffer: arrayBuffer}, { transformDocument: transformElement });
+                    let html = result.value;
+                    html = html.replace(/<p>\s*[•·]\s*(.*?)<\/p>/g, "<li>$1</li>"); // 列表补丁
+                    
+                    const markdown = turndownService.turndown(html);
+                    outputArea.value = markdown;
+                    previewArea.innerHTML = marked.parse(markdown);
+                } catch (err) {
+                    alert("文件解析失败");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function downloadFile() {
+            const blob = new Blob([outputArea.value], {type: 'text/markdown'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = "converted_" + Date.now() + ".md";
+            a.click();
+        }
+
+        function clearAll() {
+            outputArea.value = '';
+            previewArea.innerHTML = '';
+        }
+    </script>
+</body>
+</html>
