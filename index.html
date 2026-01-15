@@ -19,6 +19,7 @@
         .markdown-body table { border-collapse: collapse; width: 100%; margin-bottom: 1em; border: 1px solid #dfe2e5; }
         .markdown-body th, .markdown-body td { border: 1px solid #dfe2e5; padding: 6px 13px; }
         .markdown-body tr:nth-child(2n) { background: #f6f8fa; }
+        .markdown-body img {max-height: 50vh;}
         .markdown-body blockquote {color:#999;border-left: 5px solid #CCC;padding-left: 1em;margin-inline-start:0;}
         button { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; background: var(--primary); color: white; margin-right: 10px; }
     </style>
@@ -73,29 +74,41 @@
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             
-            // 1. 先处理内容：解构 td/th 内部的 div/span，但保留其子节点（如 img）
-            const contents = doc.querySelectorAll('td div, td span, th div, th span');
-            contents.forEach(el => {
-                const parent = el.parentNode;
-                while (el.firstChild) {
-                    parent.insertBefore(el.firstChild, el);
+            // 1. 核心改进：处理 td 内部的换行与 div
+            const cells = doc.querySelectorAll('td, th');
+            cells.forEach(cell => {
+                // 获取单元格内所有的文本内容，并将换行符替换为空格
+                // 使用 innerText 可以获取感知上的换行，然后用正则处理
+                let textContent = cell.innerText.replace(/[\n\r]+/g, ' ').trim();
+                
+                // 如果单元格里有图片，我们需要保留图片标签，只处理文本
+                if (cell.querySelector('img')) {
+                    // 对于含有图片的复杂单元格，我们单独解构 div 并处理换行
+                    const divs = cell.querySelectorAll('div, span, p');
+                    divs.forEach(d => {
+                        const space = doc.createTextNode(' '); 
+                        d.parentNode.insertBefore(space, d.nextSibling); // 在 div 后加空格
+                        const parent = d.parentNode;
+                        while (d.firstChild) parent.insertBefore(d.firstChild, d);
+                        d.remove();
+                    });
+                } else {
+                    // 纯文本单元格，直接替换为清洗后的文字
+                    cell.innerHTML = textContent;
                 }
-                el.remove();
             });
 
-            // 2. 精细清洗属性：除了 img 的 src，其余全部删除
-            const allElements = doc.querySelectorAll('*');
-            allElements.forEach(el => {
-                const attributes = Array.from(el.attributes);
-                attributes.forEach(attr => {
-                    // 💡 关键点：如果是 img 标签且属性是 src，则保留；否则移除
+            // 2. 移除所有剩余属性（保留 img 的 src）
+            doc.querySelectorAll('*').forEach(el => {
+                const attrs = Array.from(el.attributes);
+                attrs.forEach(attr => {
                     if (!(el.tagName === 'IMG' && attr.name === 'src')) {
                         el.removeAttribute(attr.name);
                     }
                 });
             });
 
-            // 3. 强制转换第一行为表头（确保 Turndown 识别表格）
+            // 3. 强制转换第一行为表头并构造 thead
             const firstRow = doc.querySelector('tr');
             if (firstRow) {
                 firstRow.querySelectorAll('td').forEach(td => {
@@ -103,10 +116,10 @@
                     th.innerHTML = td.innerHTML;
                     td.parentNode.replaceChild(th, td);
                 });
+                const thead = doc.createElement('thead');
+                thead.appendChild(firstRow);
+                doc.querySelector('table').insertBefore(thead, doc.querySelector('tbody'));
             }
-
-            // 4. 清理干扰标签
-            doc.querySelectorAll('colgroup, col, style, meta').forEach(el => el.remove());
 
             return doc.body.innerHTML;
         }
